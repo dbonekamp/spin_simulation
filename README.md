@@ -12,3 +12,13 @@ www.githubtocolab.com
 
 However, do so at your own risk.
 
+
+## On Windows
+may have to install modules this way:
+
+.\python.exe -m pip install tqdm --user
+
+Find your executable location this way:
+import sys
+print(sys.executable)
+
