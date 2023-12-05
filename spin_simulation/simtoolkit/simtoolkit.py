@@ -63,7 +63,9 @@ class Spin:
         self.frequency = frequency
         self.magnitude = magnitude
         self.vector = Vector(0.0, 0.0, 1.0).mult(magnitude);
-        self.relaxation_rate = 0.02 
+        self.relaxation_rate = 0.002 
+    def set_relaxation(self, relaxation_rate):
+        self.relaxation_rate = relaxation_rate
     def getFrequency(self):
         return self.frequency
     def precess(self, time_msec):
@@ -89,6 +91,12 @@ class Spinensemble:
     def __init__(self, number_spins, offset_frequency, stdev_offset):
         magnitude = 2.0
         self.spin_array = [ Spin(freq, magnitude) for freq in np.random.normal(offset_frequency, stdev_offset, number_spins)]
+        self.relaxation_rate = 0.02
+        self.number_spins = number_spins
+    def set_relaxation(self, relaxation_rate):
+        self.relaxation_rate = relaxation_rate
+        for spin in self.spin_array:
+            spin.set_relaxation(relaxation_rate)
     def precess(self, time_msec):
         for spin in self.spin_array:
             spin.precess(time_msec)
@@ -99,7 +107,8 @@ class Spinensemble:
         res = Vector(0.0,0.0,0.0)
         for spin in self.spin_array:
             res=res.add(spin.vector)
-        return [res.norm()] + res.xy_z()
+        xy_z = res.xy_z()
+        return [res.norm()/self.number_spins] + [xy_z[0]/self.number_spins] + [xy_z[0]/self.number_spins]
     def magnitudeMagnetizationAfterPrecession(self,time_msec):     
         self.precess(time_msec)      
         return self.magnitude_and_magnetization
@@ -152,6 +161,12 @@ class PulseSequence:
         self.timepoints = None
         self.ensemble = None
         self.signal_over_time = []
+        self.TR = None
+        self.pltax = None
+    def setAx(self, ax):
+        self.pltax = ax
+    def setTR(self, TR):
+        self.TR = TR
     def add(self, pulse):
         self.sequence.append(pulse)
     def simulate(self, ensemble, timepoints):
@@ -165,7 +180,7 @@ class PulseSequence:
         prev_timepoint = timepoints[0]
         self.signal_over_time.append(ensemble.magnitude_and_magnetization())
         last_min = 0
-        detect_thresh = 600
+        detect_thresh = 0.25
         cur_max = [None, 0, None]
         for i in tqdm(timepoints[1:]):
             elapsed = i - prev_timepoint
@@ -190,28 +205,40 @@ class PulseSequence:
                     current_peak_label_asc+=1
             prev_timepoint = i
             self.sortExpectedPeaks()
-        return [timepoints, self.signal_over_time, self.peaks]
+        return [timepoints, self.signal_over_time, self.peaks, self.expected_peaks]
+    def load(self, signal_list):
+        self.signal_over_time = signal_list[1]
+        self.peaks = signal_list[2]
+        self.expected_peaks = signal_list[3]
     def checkPulseAndApplyIfAppropriate(self, ensemble, timepoints):
         for pulse in self.sequence:
-            if pulse.time in timepoints:
-                print(f"{pulse.time=}, {timepoints=}")
+            timepoints_mod = [a%self.TR for a in timepoints]
+            if pulse.time in timepoints_mod:
+                idx = timepoints_mod.index(pulse.time)
+                tr_newpulse = Pulse(pulse.type, timepoints[idx], pulse.value)
+                print(f"{tr_newpulse.time=}, {timepoints=}")
                 #print(f"checking {pulse.toString()}")
-                pulse.apply(ensemble)
-                self.expected_peaks = self.expected_peaks + pulse.expectedPeaks(self.peaks)
+                tr_newpulse.apply(ensemble)
+                self.expected_peaks = self.expected_peaks + tr_newpulse.expectedPeaks(self.peaks)
     def plotWithSignal(self, signal):
         mag_signal = [a[0] for a in signal[1]]
         max_mag_signal = max(mag_signal)
         xy_signal = [a[1] for a in signal[1]]
         z_signal = [a[2] for a in signal[1]]
+        curax = plt
+        if self.pltax:
+            curax = self.pltax
         print(mag_signal)
-        for pulse in self.sequence:
-            label = f"{pulse.toString()}"
-            plt.axvline(x = pulse.time, color = pulse.color, label = label)
-            plt.text(pulse.time, max_mag_signal*.8, label,rotation=90)
-        plt.plot(signal[0], mag_signal, color = 'b', label='Magnitude')
-        plt.plot(signal[0], xy_signal, color = 'c', label = 'xy Magnetization')
-        plt.plot(signal[0], z_signal, color = 'g', label = 'z-Magnetization')
-        plt.legend()
+        max_time = max(self.timepoints)
+        for TRi in range(0,int(max_time/self.TR)):
+            for pulse in self.sequence:
+                label = f"{pulse.toString()}"
+                curax.axvline(x = pulse.time + self.TR*TRi, color = pulse.color, label = label)
+                curax.text(pulse.time + self.TR*TRi, max_mag_signal*.4, label,rotation=90)
+        curax.plot(signal[0], mag_signal, color = 'c', label='Magnitude')
+        curax.plot(signal[0], xy_signal, color = 'b', linewidth=2.0, label = 'xy Magnetization')
+        curax.plot(signal[0], z_signal, color = 'g', label = 'z-Magnetization')
+        curax.legend()
     def sortExpectedPeaks(self):
         self.expected_peaks = sorted(self.expected_peaks, key=lambda x: x[0])
     def determineHeightOfExpectedPeaks(self):
@@ -228,21 +255,28 @@ class PulseSequence:
             prev_timepoint = i
     def showExpectedPeaks(self):
         circle_radius = 5
-        ydist = 50
+        ydist = 0
+        curax = plt
+        if self.pltax:
+            curax = self.pltax        
         for p in self.expected_peaks:
-            # circle = plt.Circle((p[0], p[1]), circle_radius, color = 'r')
-            # plt.gca().add_patch(circle)
-            plt.plot(p[0], p[1],'ro') 
-            label = p[3]
-            plt.text(p[0], p[1] + ydist, label,rotation=90)
+            if p[1]: # will be None if peak is off the chart
+                # circle = plt.Circle((p[0], p[1]), circle_radius, color = 'r')
+                # plt.gca().add_patch(circle)
+                curax.plot(p[0], p[1],'ro') 
+                label = p[3]
+                curax.text(p[0], p[1] + ydist, label,rotation=90)
     def showPeakLabels(self):
+        curax = plt
+        if self.pltax:
+            curax = self.pltax        
         circle_radius = 5
-        ydist = 350
-        xdist = 20
+        ydist = 0.05
+        xdist = np.max(self.timepoints)/80
         for p in self.peaks:
-            plt.plot(p[0], p[1],'go', markersize=10) 
+            curax.plot(p[0], p[1],'go', markersize=10) 
             label = p[3]
-            plt.text(p[0]-xdist, p[1] + ydist, label,rotation=0, fontsize=12)  
+            curax.text(p[0]-xdist, p[1] + ydist, label,rotation=0, fontsize=12)  
             label = f"({p[0]} msec)"
-            plt.text(p[0]-xdist, p[1] + ydist*2, label,rotation=90, fontsize=8)       
+            curax.text(p[0]-xdist, p[1] + ydist + 0.1, label,rotation=90, fontsize=8)       
 
