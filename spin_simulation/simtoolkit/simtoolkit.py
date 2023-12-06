@@ -74,7 +74,7 @@ class Spin:
         #print(f"angle = {angle}")
         self.vector = self.vector.rotatez(angle)
     def toString(self):
-        return f"Frequency = {self.frequency}, vector = {self.vector.toString()}, magnitude = {self.magnitude}"
+        return f"Frequency = {self.frequency}, vector = {self.vector.round().toString()}, magnitude = {self.magnitude}"
     def print(self):
         print(self.toString())        
     def magnitude(self):
@@ -196,7 +196,7 @@ class PulseSequence:
         prev_timepoint = timepoints[0]
         self.signal_over_time.append(ensemble.magnitude_and_magnetization())
         last_min = 0
-        detect_thresh = 0.25
+        detect_thresh = 0.12
         cur_max = [None, 0, None]
         for i in tqdm(timepoints[1:]):
             elapsed = i - prev_timepoint
